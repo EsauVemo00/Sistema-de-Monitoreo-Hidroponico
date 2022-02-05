@@ -1,0 +1,258 @@
+//PROGRAMA PARA EL ARDUINO ESCLAVO
+
+//Angel Parra Arianna - Vela Mosqueda Esaú
+//S18003537 - S18003542
+
+//Ingeniería Mecatrónica
+
+//Librerias, pines y variables
+//Pantalla TFT 3.5''
+#include<Adafruit_GFX.h>
+#include<MCUFRIEND_kbv.h>
+MCUFRIEND_kbv tft;                                              //Define que tipo de pantalla se está ocupando
+/*
+   Las siguientes dos lineas son las configuraciones internas para la pantalla
+   que se obtienen al momento de calibrar con un programa de ejemplo de la librería
+*/
+const int XP = 8, XM = A2, YP = A3, YM = 9; //320x480 ID=0x9486
+const int TS_LEFT = 122, TS_RT = 911, TS_TOP = 951, TS_BOT = 94;
+
+/*
+   Colores definidos para utilizar
+   tft.color565(0, 173, 78) Color verde UV en RGB
+   tft.color565(0, 91, 172) Color azul UV en RGB
+*/
+#define BLACK 0x0000
+#define NAVY 0x000F
+#define DARKGREEN 0x03E0
+#define DARKCYAN 0x03EF
+#define MAROON 0x7800
+#define PURPLE 0x780F
+#define OLIVE 0x7BE0
+#define LIGHTGREY 0xC618
+#define DARKGREY 0x7BEF
+#define BLUE 0x001F
+#define GREEN 0x07E0
+#define CYAN 0x07FF
+#define RED 0xF800
+#define MAGENTA 0xF81F
+#define YELLOW 0xFFE0
+#define WHITE 0xFFFF
+#define ORANGE 0xFD20
+#define GREENYELLOW 0xAFE5
+#define PINK 0xF81F
+
+//Módulo MicroSD
+#include<SPI.h>
+#include<SD.h>
+#define SSpin 10                                                //Define el pin donde se conecta la entrada de datos del modulo MicroSD
+File archivo;                                                   //Define como archivo para escribir
+
+//Variables locales
+int SerialData[20];                                             //Array usada para almacenar los valores enviados del Arduino maestro
+int Temperatura, HumedadRelativa, pHValor, Volumen;             //Variables de sensores
+int day, month, year, hours, minutes, seconds;                  //Variables de la hora y fecha actual
+
+
+//Colores en RGB utilizados para el gráfico de valores de pH en una matriz
+int pHColor[ 15 ][ 3 ] = {{236, 29, 37}, {241, 104, 35}, {248, 197, 17}, {247, 237, 26}, {181, 211, 51}, {132, 195, 63}, {76, 183, 76}, {51, 169, 75}, {31, 181, 106}, {10, 184, 182}, {70, 144, 206}, {56, 83, 164}, {90, 81, 161}, {100, 68, 157}, {70, 44, 131}};
+
+void setup() {
+  Serial.begin(4800);                                           //Inicializa la velocidad del Serial en Baudios
+  uint16_t ID = tft.readID();                                   //Lee el ID de la pantalla TFT
+  tft.begin(ID);                                                //Inicializa la pantalla con su correcto ID
+  /*
+     Empieza el código de la pantalla principal (la parte que
+     no varia en el tiempo), para que este establecida.
+  */
+  tft.setRotation(0);                                           //Establece la rotación que tendrá la pantalla
+  tft.fillScreen(tft.color565(0, 173, 78));                     //Establece el color de fondo de la pantalla
+  tft.fillRect(0, 0, 320, 50, tft.color565(0, 91, 172));        //Está función rellena un rectangulo en la posición y color deseados
+  tft.setTextColor(WHITE);                                      //Determina el color del texto proximmo a escribir, se mantendrá el mismo hasta un nuevo cambio
+  tft.setTextSize(2);                                           //Determina el tamaño del texto proximo a escribir, se mantendrá el mismo hasta un nuevo cambio
+  tft.setCursor(60, 7);                                         //Determina el punto inicial donde empezará a escribir
+  tft.print("MONITOREO CULTIVO");                               //Imprime el texto en la pantalla
+  tft.setCursor(90, 25);
+  tft.print("HIDROPONICO");
+  tft.setTextSize(1);
+  tft.setCursor(45, 80);
+  tft.setTextColor(BLACK);
+  tft.print("TEMPERATURA ( C)");
+  tft.drawRect(110, 100, 20, 100, BLACK);
+  tft.drawCircle(124, 82, 2, BLACK);                            //Está función rellena un circulo en la posición y color deseados
+  tft.setCursor(135, 100);
+  tft.print("45");
+  tft.setCursor(135, 190);
+  tft.print("10");
+  tft.setCursor(185, 80);
+  tft.print("HUMEDAD RELATIVA (%)");
+  tft.drawRect(270, 100, 20, 100, BLACK);
+  tft.setCursor(295, 100);
+  tft.print("100");
+  tft.setCursor(295, 190);
+  tft.print("0");
+  tft.setCursor(45, 240);
+  tft.print("ESCALA DE PH");
+  tft.drawRect(110, 260, 20, 100, BLACK);
+  tft.setCursor(205, 240);
+  tft.print("VOLUMEN (mL)");
+  tft.drawRect(270, 260, 20, 100, BLACK);
+  tft.setCursor(295, 260);
+  tft.print("2500");
+  tft.setCursor(295, 350);
+  tft.print("0");
+
+}
+
+void loop() {
+  /*
+     Primera parte del código realiza la lectura de los datos enviados por el
+     Arduino maestro, y los almacena en el array "SerialData" para usarlo
+     posteriormente al imprimir los valores en la pantalla
+  */
+  Serial.println(Serial.available());
+  if (Serial.available() > 0)
+  {
+    int i = 0;
+    while (Serial.available() > 0)                              //Mientras exista datos disponibles se seguirá leyendo
+    {
+      SerialData[i] = Serial.read();                            //Almacena en el array los valores recibidos del Arduino Maestro
+      Serial.print("Recibido: ");
+      Serial.println(SerialData[i]);
+      i = i + 1;
+    }
+  }
+  /*
+     Recolecta los valores recibidos y los almacena en variables locales
+     de los sensores y la fecha y hora actual.
+  */
+  HumedadRelativa = SerialData[0];
+  Temperatura = SerialData[1];
+  Volumen = SerialData[2] * 10;
+  pHValor = SerialData[3];
+  day = SerialData[4];
+  month = SerialData[5];
+  year = SerialData[6] + 2000;
+  hours = SerialData[7];
+  minutes = SerialData[8];
+  seconds = SerialData[9];
+  /*
+     Segunda parte del código donde imprime todos los datos obtenidos en la
+     pantalla y con los valores en tiempo real se realiza la graficación
+     visual para el usuario final
+  */
+  tft.setTextColor(WHITE, tft.color565(0, 173, 78));
+  tft.setTextSize(4);
+  tft.setCursor(35, 120);
+  tft.fillRect(35, 120, 70, 60, tft.color565(0, 173, 78));
+  tft.print(Temperatura);                                       //Imprime el valor de Temperatura recibido
+  for (int i = 10; i < 46; i++)                                 //Este ciclo actualiza el gráfico con la temperatura recibida
+  {
+    if (Temperatura == i)
+    {
+      tft.fillRect(111, 101, 18, 98, tft.color565(0, 173, 78));
+      tft.fillRect(111, 199, 18, -(i - 10) * 2.8, RED);
+    }
+  }
+
+  tft.setCursor(185, 120);
+  tft.fillRect(185, 120, 70, 60, tft.color565(0, 173, 78));
+  tft.print(HumedadRelativa);                                  //Imprime el valor de Humedad Relativa recibido
+  for (int i = 10; i < 101; i++)                                //Este ciclo actualiza el gráfico con la Humedad relativa recibida
+  {
+    if (HumedadRelativa == i)
+    {
+      tft.fillRect(271, 101, 18, 98, tft.color565(0, 173, 78));
+      tft.fillRect(271, 199, 18, -i, BLUE);
+    }
+  }
+
+  tft.drawRect(270, 100, 20, 100, BLACK);
+  tft.setCursor(35, 280);
+  tft.fillRect(35, 260, 75, 60, tft.color565(0, 173, 78));
+  tft.print(pHValor);                                           //Imprime el valor de pH recibido
+  for (int i = 0; i < 15; i++)                                  //Este ciclo actualiza el gráfico con el pH recibido
+  {
+    if (pHValor == i)
+    {
+      tft.fillRect(111, 261, 18, 98, tft.color565(pHColor[i][0], pHColor[i][1], pHColor[i][2]));
+    }
+  }
+
+  tft.setCursor(165, 280);
+  tft.fillRect(165, 280, 100, 40, tft.color565(0, 173, 78));
+  tft.print(Volumen);                                           //Imprime el valor del volumen recibido
+  for (int i = 0; i < 2499; i++)                                //Este ciclo actualiza el gráfico con el volumen recibido
+  {
+    if (Volumen == i)
+    {
+      tft.fillRect(271, 261, 18, 98, tft.color565(0, 173, 78));
+      tft.fillRect(271, 359, 18, -i * 0.04, tft.color565(255, 215, 0));
+    }
+  }
+  tft.fillRect(40, 400, 280, 20, tft.color565(0, 173, 78));
+  /*
+     Comienza a imprimir la hora y fecha actual recibido
+  */
+  tft.setTextSize(2);
+  tft.setTextColor(BLACK, tft.color565(0, 173, 78));
+  tft.setCursor(40, 400);
+  tft.print(day);
+  tft.print("/");
+  tft.print(month);
+  tft.print("/");
+  tft.print(year);
+  tft.setCursor(180, 400);
+  tft.print(hours);
+  tft.print(":");
+  tft.print(minutes);
+  tft.print(":");
+  tft.print(seconds);
+
+  if (SD.begin(SSpin) == 0)                                     //Pregunta si no existe una tarjeta MicroSD conectada
+  {
+    tft.fillRect(40, 380, 100, 20, tft.color565(0, 173, 78));
+    tft.setTextSize(2);
+    tft.setTextColor(RED, tft.color565(0, 173, 78));
+    tft.setCursor(40, 380);
+    tft.print("No hay MicroSD");
+    Serial.println("no hay SD");
+  }
+  else                                                          //Si existe entra a este código
+  {
+    tft.fillRect(40, 380, 180, 20, tft.color565(00, 173, 78));
+    tft.setTextSize(2);
+    tft.setTextColor(BLUE, tft.color565(0, 173, 78));
+    tft.setCursor(40, 380);
+    tft.print("MicroSD");
+    if (minutes == 0 && seconds == 0)
+    {
+      archivo = SD.open("mch.txt", FILE_WRITE);
+      if (archivo)                                              //Pregunta si existe un archivo con ese nombre o lo crea
+      {
+        archivo.print(day);                                     //Comienza a escribir en la tarjeta MicroSD
+        archivo.print("/");
+        archivo.print(month);
+        archivo.print("/");
+        archivo.print(year);
+        archivo.print(" ");
+        archivo.print(hours);
+        archivo.print(":");
+        archivo.print(minutes);
+        archivo.print(":");
+        archivo.print(seconds);
+        archivo.print(" ");
+        archivo.print(Temperatura);
+        archivo.print("°C ");
+        archivo.print(HumedadRelativa);
+        archivo.print("% ");
+        archivo.print(pHValor);
+        archivo.print("pH ");
+        archivo.print(Volumen);
+        archivo.println("mL");
+        archivo.close();
+      }
+    }
+  }
+  delay(500);
+}
